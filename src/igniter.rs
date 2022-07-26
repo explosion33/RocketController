@@ -9,7 +9,7 @@ use std::thread;
 pub struct Igniter {
     fire_pin: Arc<Mutex<OutputPin>>,
     cont_pin: InputPin,
-    gpio: Gpio
+    //gpio: Gpio
 }
 
 impl Igniter {
@@ -18,7 +18,7 @@ impl Igniter {
         let fp: OutputPin = gpio.get(fire_pin).expect("could not initialize fire pin").into_output();
         let fire = Arc::new(Mutex::new(fp));
         let cont: InputPin = gpio.get(cont_pin).expect("could not initialize cont pin").into_input();
-        Igniter{fire_pin: fire, cont_pin: cont, gpio: gpio}
+        Igniter{fire_pin: fire, cont_pin: cont}//, gpio: gpio}
     }
     pub fn has_continuity(&mut self) -> bool {
         self.cont_pin.is_high()
@@ -31,7 +31,7 @@ impl Igniter {
     }
 
     pub fn fire(&mut self) {
-        // derefence Arc, lock mutex, call fire helper, without thread
+        // derefence Arc, lock mutex, call fire helper, without 
         Igniter::fire_helper(&mut *self.fire_pin.lock().unwrap());
     }
 
