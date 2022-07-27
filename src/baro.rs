@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 extern crate bmp085;
 extern crate i2cdev;
 
@@ -5,7 +7,6 @@ use bmp085::*;
 use i2cdev::linux::*;
 use i2cdev::sensors::{Barometer, Thermometer};
 
-use core::num;
 use std::thread;
 use std::time::Duration;
 use std::fs::File;
@@ -50,7 +51,6 @@ impl Baro {
     }
 
     pub fn get_pressure(&mut self) -> Result<f32, u8> {
-        self.sensor.pressure_kpa();
         match self.sensor.pressure_kpa() {
             Ok(n) => {Ok(n)},
             Err(_) => {Err(0)},

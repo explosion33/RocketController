@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use rppal::gpio::Gpio;
 use rppal::gpio::OutputPin;
 use rppal::gpio::InputPin;
@@ -46,10 +48,10 @@ impl Igniter {
         thread::spawn(move || {
             // we move the copy into the thead, dereference the pointer,
             // lock the mutex, and create a mutable reference to the pin
-            let mut p = &mut *p.lock().unwrap();
+            let p = &mut *p.lock().unwrap();
 
             // we then pass the pin to our helper function which initiates the fire
-            Igniter::fire_helper( p);
+            Igniter::fire_helper(p);
         })
     }
 }
