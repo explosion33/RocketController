@@ -24,18 +24,20 @@ fn main() {
     let collect = Arc::clone(&thread_data);
     thread::spawn(move || {
         let mut barometer = Baro::new(BARO_CONFIG_PATH);
+        let mut main_ign = Igniter::new(FIRE, CONT);
 
         let start = SystemTime::now();
         loop {
             {
-                let dt = SystemTime::now().duration_since(start).expect("time fucked up");
+                let dt = SystemTime::now().duration_since(start).expect("time fucked up").as_secs_f32();
                 let mut data = collect.lock().unwrap();
                 match barometer.get_alt() {
                     Ok(n) => {
-                        data.altitude.push((dt.as_secs_f32(), n));
+                        data.altitude.push((dt, n));
                     },
                     Err(_) => {},
                 };
+                data.cont_main.push((dt, main_ign.has_continuity() as i8 as f32));
             }
             //allow other threads a chance to lock mutex
             thread::sleep(Duration::from_millis(50)); 
