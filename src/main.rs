@@ -40,11 +40,15 @@ fn pre_flight() {
     
     // start and wait for thread to finish
     let handle = thread::spawn(move || {
+        println!("setting up thread");
         api_getter(collect);
     });
 
+    println!("starting api");
     start_api(thread_data);
+    println!("api closed");
     handle.join();
+    println!("thread closed");
 }
 
 fn api_getter(thread_data: api::TData) {
@@ -59,6 +63,9 @@ fn api_getter(thread_data: api::TData) {
 
     //main loop
     let start = SystemTime::now();
+
+    println!("thread initialized, starting loop");
+
     loop {
         let dt = SystemTime::now().duration_since(start).expect("time fucked up").as_secs_f32();
         let mut data = thread_data.lock().unwrap();
@@ -71,6 +78,7 @@ fn api_getter(thread_data: api::TData) {
         // sort through any push commands
         for command in data.cmds.iter() {
             let (cmd, val) = command;
+            println!("cmd: {} [{}]", cmd, val);
             match cmd.as_str() {
                 "config_baro" => {
                     barometer.configure(*val);
@@ -187,8 +195,6 @@ fn main() {
     // ARMED STAGE
     /*
      * TODO:
-     * add second igniter
-     * handle push commands for igniter ignition
      * add ascent, descent under droug, and descent under main states
      * add buzzer + external LED support
      * fine tune above constants to remove noise from calculations
@@ -198,9 +204,13 @@ fn main() {
      * 
     */
 
+    println!("initializing flight sensors");
+
     let mut main_ign = Igniter::new(M_FIRE, M_CONT);
     let mut droug_ign = Igniter::new(D_FIRE, D_CONT);    
     let mut barometer = Baro::new(BARO_CONFIG_PATH);
+
+    println!("sensors initialized, waiting for liftoff");
 
     //detect_liftoff(&mut barometer);
 
