@@ -4,6 +4,9 @@ mod igniter;
 use crate::baro::Baro;
 mod baro;
 
+use crate::indicator::Indicator;
+mod indicator;
+
 use crate::api::{start_api};
 mod api;
 
@@ -189,8 +192,14 @@ fn detect_liftoff(barometer: &mut Baro) {
 }
 
 fn main() {
+    let mut buzzer = Indicator::new(26);
+
+    buzzer.start(500, 1000, 5000);
+
     // pre-flight API
     pre_flight();
+
+    buzzer.start_inf(1000, 1000);
 
     // ARMED STAGE
     /*
@@ -210,8 +219,12 @@ fn main() {
     let mut droug_ign = Igniter::new(D_FIRE, D_CONT);    
     let mut barometer = Baro::new(BARO_CONFIG_PATH);
 
+    
+
     println!("sensors initialized, waiting for liftoff");
 
     //detect_liftoff(&mut barometer);
+
+    buzzer.stop();
 
 }
