@@ -13,8 +13,12 @@ use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 
-const FIRE: u8 = 23;
-const CONT: u8 = 24;
+const M_FIRE: u8 = 23;
+const M_CONT: u8 = 22;
+
+const D_FIRE: u8 = 27;
+const D_CONT: u8 = 17;
+
 const BARO_CONFIG_PATH: &str = "baro.conf";
 
 //rolling average
@@ -46,7 +50,8 @@ fn pre_flight() {
 fn api_getter(thread_data: api::TData) {
     // sensors
     let mut barometer = Baro::new(BARO_CONFIG_PATH);
-    let mut main_ign = Igniter::new(FIRE, CONT);
+    let mut main_ign = Igniter::new(M_FIRE, M_CONT);
+    let mut droug_ign = Igniter::new(D_FIRE, D_CONT);
 
     // averaging vars
     let mut window: Vec<f32> = vec![];
@@ -69,6 +74,13 @@ fn api_getter(thread_data: api::TData) {
             match cmd.as_str() {
                 "config_baro" => {
                     barometer.configure(*val);
+                },
+                "fire" => {
+                    match *val {
+                        0f32 => {droug_ign.fire_async();},
+                        1f32 => {main_ign.fire_async();},
+                        _ => {},
+                    };
                 },
                 _ => {},
             };
@@ -99,6 +111,7 @@ fn api_getter(thread_data: api::TData) {
 
         // continuity sensor data
         data.cont_main.push((dt, main_ign.has_continuity() as i8 as f32));
+        data.cont_droug.push((dt, droug_ign.has_continuity() as i8 as f32));
 
         //allow other threads a chance to lock mutex
         drop(data);
@@ -106,7 +119,7 @@ fn api_getter(thread_data: api::TData) {
     }
 }
 
-fn detect_liftoff(barometer: &mut Baro, main_ign: &mut Igniter) {
+fn detect_liftoff(barometer: &mut Baro) {
     // get average resting altitude
     let mut base_alt: f32 = 0f32;
     let mut i = 0;
@@ -185,9 +198,10 @@ fn main() {
      * 
     */
 
-    let mut main_ign = Igniter::new(FIRE, CONT);    
+    let mut main_ign = Igniter::new(M_FIRE, M_CONT);
+    let mut droug_ign = Igniter::new(D_FIRE, D_CONT);    
     let mut barometer = Baro::new(BARO_CONFIG_PATH);
 
-    detect_liftoff(&mut barometer, &mut main_ign);
+    //detect_liftoff(&mut barometer);
 
 }
