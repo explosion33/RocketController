@@ -58,8 +58,6 @@ fn handle_api(state: &State<TData>, field: &str, points: i32) -> Json<Vec<(f32, 
     let points: i32 = if is_neg {points*-1} else {points};
     let points: usize = points as usize;
 
-    println!("{}, -: {}", points, is_neg);
-
     return match field {
         "alt" => {
             Json(compile_vec(&mut data.altitude, points, is_neg))
@@ -81,9 +79,7 @@ fn handle_api(state: &State<TData>, field: &str, points: i32) -> Json<Vec<(f32, 
 }
 
 #[rocket::get("/cmd/<cmd>")]
-fn handle_cmd(cmd: &str) -> &'static str {
-    println!("{}", cmd);
-    
+fn handle_cmd(cmd: &str) -> &'static str {    
     if cmd == "arm" {
         println!("wrong arm");
     }
