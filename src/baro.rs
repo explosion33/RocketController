@@ -27,7 +27,16 @@ impl Baro {
         let i2c_dev = LinuxI2CDevice::new("/dev/i2c-1", BMP085_I2C_ADDR).expect("unable to access i2c device");
         let sensor = BMP085BarometerThermometer::new(i2c_dev, SamplingMode::Standard).expect("could not create bmp085 object");
     
-        let (base_alt, base_pres): (f32, f32) = Baro::read_config(String::from(config_path)).expect("could not read config");
+        let (base_alt, base_pres): (f32, f32) = match Baro::read_config(String::from(config_path)) {
+            Ok(n) => {n},
+            Err(_) => {
+                Baro::empty_configure(String::from(config_path));
+                let res = Baro::read_config(String::from(config_path))
+                    .expect("FATAL ERROR | could not find or create valid baro.conf");
+                println!("WARNING | Created blank config, readings will be wrong");
+                res
+            },
+        };
 
         Baro {sensor: Box::new(sensor), config_path: String::from(config_path), base_alt, base_pres}
     }
@@ -84,6 +93,13 @@ impl Baro {
         self.base_pres = avg_pres;
         
     
+    }
+
+    fn empty_configure(config_path: String) {
+        let mut file = File::create(config_path.to_string()).expect("could not create file");
+
+        file.write_all(format!("{}\n{}", 0, 0).as_bytes()).expect("could not write to file");
+        let _ = io::stdout().flush();
     }
 
     fn read_config(path: String) -> Result<(f32, f32), &'static str> {
