@@ -62,7 +62,7 @@ impl Baro {
 
         let mut total_pres: f32 = 0f32;
         let mut num_pres:usize = 0;
-        while num_pres < 10 {
+        while num_pres < 50 {
             match self.get_pressure() {
                 Ok(n) => {
                     num_pres += 1;
@@ -74,7 +74,7 @@ impl Baro {
 
         }
     
-        let avg_pres = total_pres / 10f32;
+        let avg_pres = total_pres / num_pres as i32 as f32;
         println!("{}, {}, {}", avg_pres, total_pres, num_pres);
 
         file.write_all(format!("{}\n{}", alt, avg_pres).as_bytes()).expect("could not write to file");
