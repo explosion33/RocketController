@@ -11,11 +11,14 @@ pub struct Data {
     pub altitude: Vec<(f32, f32)>,
     pub cont_main: Vec<(f32, f32)>,
     pub cont_droug: Vec<(f32, f32)>,
+
+    pub is_alive: bool,
+    pub cmds: Vec<(String, f32)>,
 }
 
 impl Data {
     pub fn new() -> Data {
-        Data {altitude: vec![], cont_main: vec![], cont_droug: vec![]}
+        Data {altitude: vec![], cont_main: vec![], cont_droug: vec![], is_alive: true, cmds: vec![]}
     }
 }
 
@@ -89,6 +92,17 @@ fn handle_cmd(cmd: &str) -> &'static str {
     ""
 }
 
+#[rocket::get("/cmd/<cmd>/<val>")]
+fn handle_cmd_val(state: &State<TData>, cmd: &str, val: f32) -> &'static str {
+    let data = Arc::clone(&state);
+    let mut data = data.lock().expect("could not lock mutex");
+    
+    data.cmds.push((String::from(cmd), val));
+
+
+    ""
+}
+
 #[rocket::get("/cmd/arm")]
 fn shutdown(shutdown: Shutdown) -> &'static str {
     shutdown.notify();
@@ -97,6 +111,7 @@ fn shutdown(shutdown: Shutdown) -> &'static str {
 
 
 pub fn start_api(data: TData) {
+    let api_data = Arc::clone(&data);
     rocket::tokio::runtime::Builder::new_multi_thread()
         .worker_threads(Config::from(Config::figment()).workers)
         // NOTE: graceful shutdown depends on the "rocket-worker" prefix.
@@ -106,9 +121,13 @@ pub fn start_api(data: TData) {
         .expect("create tokio runtime")
         .block_on(async move {
             let _ = rocket::build()
-            .mount("/", rocket::routes![handle_api, handle_cmd, shutdown])
-            .manage(Arc::clone(&data))
+            .mount("/", rocket::routes![handle_api, handle_cmd, handle_cmd_val, shutdown])
+            .manage(api_data)
             .launch()
             .await;
-        })
+        });
+
+    let data = Arc::clone(&data);
+    let mut data = data.lock().expect("could not lock mutex");
+    data.is_alive = false;
 }
