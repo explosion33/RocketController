@@ -25,15 +25,16 @@ const D_CONT: u8 = 17;
 const BARO_CONFIG_PATH: &str = "baro.conf";
 
 //rolling average
-const WINDOW_SIZE: usize = 10;
+const WINDOW_SIZE: usize = 35;
 //number of points for baseline average
 const BASELINE_ITER: usize = 150;
 //change in meters, to count as a significant change
 //should be adjusted to overcome noise
 const SIG_ALT_CHANGE: f32 = 1.1f32;
-const ITER_ABOVE_SIG: u8 = 100;
+const ITER_ABOVE_SIG: u8 = 50;
 
-const START_ALT: f32 = 189f32;
+const MAIN_DEPLOY_ALT: f32 = 199;
+
 
 fn pre_flight() {
     // initiate shared memory
@@ -62,7 +63,6 @@ fn api_getter(thread_data: api::TData) {
 
     // averaging vars
     let mut window: Vec<f32> = vec![];
-    const WINDOW_SIZE: usize = 10;
 
     //main loop
     let start = SystemTime::now();
@@ -130,23 +130,7 @@ fn api_getter(thread_data: api::TData) {
     }
 }
 
-fn detect_liftoff(barometer: &mut Baro) {
-    // get average resting altitude
-    let mut base_alt: f32 = 0f32;
-    let mut i = 0;
-    while i < BASELINE_ITER {
-        match barometer.get_alt() {
-            Ok(n) => {
-                base_alt += n;
-                i += 1;
-                thread::sleep(Duration::from_millis(20));
-            }
-            Err(_) => {}
-        }
-    }
-    base_alt /= i as f32;
-    println!("base-alt: {}", base_alt);
-
+fn detect_liftoff(barometer: &mut Baro, base_alt: &f32) {
     // detect significant upwards elevation change
     let mut window: Vec<f32> = vec![];
     let mut num_above_sig: u8 = 0;
@@ -191,6 +175,96 @@ fn detect_liftoff(barometer: &mut Baro) {
     }
 }
 
+fn detect_apogee(barometer: &mut Baro, base_alt: &f32) {
+    let mut window: Vec<f32> = vec![];
+
+    let mut max_altitude = *base_alt;
+    let mut num_above_sig: u8 = 0;
+
+    loop {
+        match barometer.get_alt() {
+            Ok(n)=>{
+                window.push(n);
+                if window.len() > WINDOW_SIZE {
+                    window.remove(0);
+                }
+            },
+            Err(_) => {}
+        };
+
+        if window.len() < WINDOW_SIZE {
+            continue;
+        }
+
+        //=========
+        let mut alt = 0f32;
+        for val in window.iter() {
+            alt += val;
+        }
+        alt /= WINDOW_SIZE as i32 as f32;
+
+        if alt > max_altitude {
+            max_altitude = alt;
+        }
+
+        if max_altitude - alt >= SIG_ALT_CHANGE {
+            num_above_sig += 1;
+            println!("{}/{}", num_above_sig, ITER_ABOVE_SIG);
+        }
+        else {
+            num_above_sig = 0;
+        }
+
+        // if above height threshold for given iterations
+        if num_above_sig > ITER_ABOVE_SIG {
+            return ();
+        }
+    }
+}
+
+fn detect_main(barometer: &mut Baro) {
+    let mut window: Vec<f32> = vec![];
+    let mut num_above_sig: u8 = 0;
+
+    loop {
+        match barometer.get_alt() {
+            Ok(n)=>{
+                window.push(n);
+                if window.len() > WINDOW_SIZE {
+                    window.remove(0);
+                }
+            },
+            Err(_) => {}
+        };
+
+        if window.len() < WINDOW_SIZE {
+            continue;
+        }
+
+        //=========
+        let mut alt = 0f32;
+        for val in window.iter() {
+            alt += val;
+        }
+        alt /= WINDOW_SIZE as i32 as f32;
+
+        //=========
+
+        if MAIN_DEPLOY_ALT - alt >= SIG_ALT_CHANGE {
+            num_above_sig += 1;
+            println!("{}/{}", num_above_sig, ITER_ABOVE_SIG);
+        }
+        else {
+            num_above_sig = 0;
+        }
+
+        // if above height threshold for given iterations
+        if num_above_sig > ITER_ABOVE_SIG {
+            return ();
+        }
+    }
+}
+
 fn main() {
     let mut buzzer = Indicator::new(26);
 
@@ -199,13 +273,10 @@ fn main() {
     // pre-flight API
     pre_flight();
 
-    buzzer.start_inf(1000, 1000);
-
     // ARMED STAGE
     /*
      * TODO:
-     * add ascent, descent under droug, and descent under main states
-     * add buzzer + external LED support
+     * add data logging support
      * fine tune above constants to remove noise from calculations
      *
      * TESTING:
@@ -219,12 +290,32 @@ fn main() {
     let mut droug_ign = Igniter::new(D_FIRE, D_CONT);    
     let mut barometer = Baro::new(BARO_CONFIG_PATH);
 
-    
-
+    let mut base_alt: f32 = 0f32;
+    let mut i = 0;
+    while i < BASELINE_ITER {
+        match barometer.get_alt() {
+            Ok(n) => {
+                base_alt += n;
+                i += 1;
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(_) => {}
+        }
+    }
+    base_alt /= i as f32;
+    println!("base-alt: {}", base_alt);
     println!("sensors initialized, waiting for liftoff");
 
-    //detect_liftoff(&mut barometer);
+    buzzer.start_inf(1000, 1000);
+
+    detect_liftoff(&mut barometer, &base_alt);
 
     buzzer.stop();
+
+    detect_apogee(&mut barometer, &base_alt);
+    droug_ign.fire_async();
+
+    detect_main(&mut barometer);
+    main_ign.fire_async();
 
 }
