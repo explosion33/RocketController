@@ -20,6 +20,26 @@ use std::time::SystemTime;
 use std::collections::HashMap;
 
 
+/*const M_FIRE: u8 = 23;
+const M_CONT: u8 = 22;
+
+const D_FIRE: u8 = 27;
+const D_CONT: u8 = 17;
+
+const BARO_CONFIG_PATH: &str = "baro.conf";
+
+//rolling average
+const WINDOW_SIZE: usize = 35;
+//number of points for baseline average
+const BASELINE_ITER: usize = 150;
+//change in meters, to count as a significant change
+//should be adjusted to overcome noise
+const SIG_ALT_CHANGE: f32 = 1.1f32;
+const ITER_ABOVE_SIG: u8 = 50;
+
+const MAIN_DEPLOY_ALT: f32 = 199f32;
+*/
+
 #[derive(Clone)]
 struct Settings {
     pub M_FIRE: u8,
@@ -324,6 +344,8 @@ fn main() {
 
     println!("initializing flight sensors");
 
+    buzzer.start_inf(100, 200);
+
     let mut main_ign = Igniter::new(settings.M_FIRE, settings.M_CONT);
     let mut droug_ign = Igniter::new(settings.D_FIRE, settings.D_CONT);    
     let mut barometer = Baro::new(settings.BARO_CONFIG_PATH.to_string().as_str());
@@ -343,6 +365,11 @@ fn main() {
     base_alt /= i as f32;
     println!("base-alt: {}", base_alt);
     println!("sensors initialized, waiting for liftoff");
+
+    buzzer.stop();
+    thread::sleep(Duration::from_millis(200)); //enough time for buzzer to stop
+    // should be reworked to return a join call?
+    // and managed so only one tone is running at a time
 
     buzzer.start_inf(1000, 1000);
 
