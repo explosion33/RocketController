@@ -7,45 +7,80 @@ mod baro;
 use crate::indicator::Indicator;
 mod indicator;
 
-use crate::api::{start_api};
+use crate::api::start_api;
 mod api;
+
+use crate::file_tools::parse_ini;
+mod file_tools;
 
 use std::thread;
 use std::time::Duration;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
+use std::collections::HashMap;
 
 
-const M_FIRE: u8 = 23;
-const M_CONT: u8 = 22;
+#[derive(Clone)]
+struct Settings {
+    pub M_FIRE: u8,
+    pub M_CONT: u8,
+    pub D_FIRE: u8,
+    pub D_CONT: u8,
+    pub BUZEER: u8,
+    pub STATUS: u8,
 
-const D_FIRE: u8 = 27;
-const D_CONT: u8 = 17;
+    pub BARO_CONFIG_PATH: String,
 
-const BARO_CONFIG_PATH: &str = "baro.conf";
+    pub WINDOW_SIZE: usize,
+    pub BASELINE_ITER: usize,
 
-//rolling average
-const WINDOW_SIZE: usize = 35;
-//number of points for baseline average
-const BASELINE_ITER: usize = 150;
-//change in meters, to count as a significant change
-//should be adjusted to overcome noise
-const SIG_ALT_CHANGE: f32 = 1.1f32;
-const ITER_ABOVE_SIG: u8 = 50;
+    pub SIG_ALT_CHANGE: f32,
+    pub ITER_ABOVE_SIG: u8,
+    pub MAIN_DEPLOY_ALT: f32,
+}
 
-const MAIN_DEPLOY_ALT: f32 = 199;
+impl Settings {
+    pub fn new() -> Settings{
+        let settings = parse_ini("flight.ini").expect("flight.ini not found");
+
+        let vals = ["MAIN_FIRE", "MAIN_CONT", "DROUG_FIRE", "DROUG_CONT", "BUZZER_PIN", "STATUS_PIN", "BARO_CONFIG_PATH", "WINDOW_SIZE", "BASELINE_ITER", "SIG_ALT_CHANGE", "ITER_ABOVE_SIG", "MAIN_DEPLOY_ALT"];
+
+        for &val in &vals {
+            if !settings.contains_key(val) {
+                panic!("Error | missing field \"{}\" in flight.ini", val);
+            }
+        }
+
+        Settings {
+            M_FIRE: settings["MAIN_FIRE"].parse::<u8>().expect("invalid setting"),
+            M_CONT: settings["MAIN_CONT"].parse::<u8>().expect("invalid setting"),
+            D_FIRE: settings["DROUG_FIRE"].parse::<u8>().expect("invalid setting"),
+            D_CONT: settings["DROUG_CONT"].parse::<u8>().expect("invalid setting"),
+            BUZEER: settings["BUZZER_PIN"].parse::<u8>().expect("invalid setting"),
+            STATUS: settings["STATUS_PIN"].parse::<u8>().expect("invalid setting"),
+            BARO_CONFIG_PATH: settings["BARO_CONFIG_PATH"].to_string(),
+            WINDOW_SIZE: settings["WINDOW_SIZE"].parse::<usize>().expect("invalid setting"),
+            BASELINE_ITER: settings["BASELINE_ITER"].parse::<usize>().expect("invalid setting"),
+            SIG_ALT_CHANGE: settings["SIG_ALT_CHANGE"].parse::<f32>().expect("invalid setting"),
+            ITER_ABOVE_SIG: settings["ITER_ABOVE_SIG"].parse::<u8>().expect("invalid setting"),
+            MAIN_DEPLOY_ALT: settings["MAIN_DEPLOY_ALT"].parse::<f32>().expect("invalid setting"),
+        }
+    }
+}
 
 
-fn pre_flight() {
+fn pre_flight(settings: &Settings) {
     // initiate shared memory
     let data = api::Data::new();
     let thread_data: api::TData = Arc::new(Mutex::new(data));
     let collect = Arc::clone(&thread_data); //created then moved
-    
+    let cloned_settings = settings.clone();
+
+
     // start and wait for thread to finish
     let handle = thread::spawn(move || {
         println!("setting up thread");
-        api_getter(collect);
+        api_getter(&cloned_settings, collect);
     });
 
     println!("starting api");
@@ -55,11 +90,11 @@ fn pre_flight() {
     println!("thread closed");
 }
 
-fn api_getter(thread_data: api::TData) {
+fn api_getter(settings: &Settings, thread_data: api::TData) {
     // sensors
-    let mut barometer = Baro::new(BARO_CONFIG_PATH);
-    let mut main_ign = Igniter::new(M_FIRE, M_CONT);
-    let mut droug_ign = Igniter::new(D_FIRE, D_CONT);
+    let mut barometer = Baro::new(settings.BARO_CONFIG_PATH.to_string().as_str());
+    let mut main_ign = Igniter::new(settings.M_FIRE, settings.M_CONT);
+    let mut droug_ign = Igniter::new(settings.D_FIRE, settings.D_CONT);
 
     // averaging vars
     let mut window: Vec<f32> = vec![];
@@ -70,7 +105,7 @@ fn api_getter(thread_data: api::TData) {
     println!("thread initialized, starting loop");
 
     loop {
-        let dt = SystemTime::now().duration_since(start).expect("time fucked up").as_secs_f32();
+        let dt = SystemTime::now().duration_since(start).expect("time went backwards").as_secs_f32();
         let mut data = thread_data.lock().unwrap();
 
         // check if rocket server has been closed
@@ -102,7 +137,7 @@ fn api_getter(thread_data: api::TData) {
         match barometer.get_alt() {
             Ok(n) => {
                 window.push(n);
-                if window.len() > WINDOW_SIZE {
+                if window.len() >  settings.WINDOW_SIZE {
                     window.remove(0);
                 }
             },
@@ -110,12 +145,12 @@ fn api_getter(thread_data: api::TData) {
         };
 
         // if window is full, push the computed average to api server
-        if window.len() == WINDOW_SIZE {
+        if window.len() == settings.WINDOW_SIZE {
             let mut avg: f32 = 0f32;
             for alt in window.iter() {
                 avg += alt;
             }
-            avg /= WINDOW_SIZE as f32;
+            avg /= settings.WINDOW_SIZE as f32;
 
             data.altitude.push((dt, avg));
         }
@@ -130,7 +165,7 @@ fn api_getter(thread_data: api::TData) {
     }
 }
 
-fn detect_liftoff(barometer: &mut Baro, base_alt: &f32) {
+fn detect_liftoff(settings: &Settings, barometer: &mut Baro, base_alt: &f32) {
     // detect significant upwards elevation change
     let mut window: Vec<f32> = vec![];
     let mut num_above_sig: u8 = 0;
@@ -139,7 +174,7 @@ fn detect_liftoff(barometer: &mut Baro, base_alt: &f32) {
         match barometer.get_alt() {
             Ok(n) => {
                 window.push(n);
-                if window.len() > WINDOW_SIZE {
+                if window.len() > settings.WINDOW_SIZE {
                     window.remove(0);
                 }
             },
@@ -148,7 +183,7 @@ fn detect_liftoff(barometer: &mut Baro, base_alt: &f32) {
 
         // if our window is not full skip calculations
         // i.e. first WINDOW_SIZE - 1 values
-        if window.len() != WINDOW_SIZE {
+        if window.len() != settings.WINDOW_SIZE {
             continue;
         }
 
@@ -157,25 +192,25 @@ fn detect_liftoff(barometer: &mut Baro, base_alt: &f32) {
         for alt in window.iter() {
             avg += alt;
         }
-        avg /= WINDOW_SIZE as f32;
+        avg /= settings.WINDOW_SIZE as f32;
 
         // is significantly high
-        if avg - base_alt >= SIG_ALT_CHANGE {
+        if avg - base_alt >= settings.SIG_ALT_CHANGE {
             num_above_sig += 1;
-            println!("{}/{}", num_above_sig, ITER_ABOVE_SIG);
+            println!("{}/{}", num_above_sig, settings.ITER_ABOVE_SIG);
         }
         else {
             num_above_sig = 0;
         }
 
         // if above height threshold for given iterations
-        if num_above_sig > ITER_ABOVE_SIG {
+        if num_above_sig > settings.ITER_ABOVE_SIG {
             return ();
         }
     }
 }
 
-fn detect_apogee(barometer: &mut Baro, base_alt: &f32) {
+fn detect_apogee(settings: &Settings, barometer: &mut Baro, base_alt: &f32) {
     let mut window: Vec<f32> = vec![];
 
     let mut max_altitude = *base_alt;
@@ -185,14 +220,14 @@ fn detect_apogee(barometer: &mut Baro, base_alt: &f32) {
         match barometer.get_alt() {
             Ok(n)=>{
                 window.push(n);
-                if window.len() > WINDOW_SIZE {
+                if window.len() > settings.WINDOW_SIZE {
                     window.remove(0);
                 }
             },
             Err(_) => {}
         };
 
-        if window.len() < WINDOW_SIZE {
+        if window.len() < settings.WINDOW_SIZE {
             continue;
         }
 
@@ -201,28 +236,28 @@ fn detect_apogee(barometer: &mut Baro, base_alt: &f32) {
         for val in window.iter() {
             alt += val;
         }
-        alt /= WINDOW_SIZE as i32 as f32;
+        alt /= settings.WINDOW_SIZE as i32 as f32;
 
         if alt > max_altitude {
             max_altitude = alt;
         }
 
-        if max_altitude - alt >= SIG_ALT_CHANGE {
+        if max_altitude - alt >= settings.SIG_ALT_CHANGE {
             num_above_sig += 1;
-            println!("{}/{}", num_above_sig, ITER_ABOVE_SIG);
+            println!("{}/{}", num_above_sig, settings.ITER_ABOVE_SIG);
         }
         else {
             num_above_sig = 0;
         }
 
         // if above height threshold for given iterations
-        if num_above_sig > ITER_ABOVE_SIG {
+        if num_above_sig > settings.ITER_ABOVE_SIG {
             return ();
         }
     }
 }
 
-fn detect_main(barometer: &mut Baro) {
+fn detect_main(settings: &Settings, barometer: &mut Baro) {
     let mut window: Vec<f32> = vec![];
     let mut num_above_sig: u8 = 0;
 
@@ -230,14 +265,14 @@ fn detect_main(barometer: &mut Baro) {
         match barometer.get_alt() {
             Ok(n)=>{
                 window.push(n);
-                if window.len() > WINDOW_SIZE {
+                if window.len() > settings.WINDOW_SIZE {
                     window.remove(0);
                 }
             },
             Err(_) => {}
         };
 
-        if window.len() < WINDOW_SIZE {
+        if window.len() < settings.WINDOW_SIZE {
             continue;
         }
 
@@ -246,32 +281,35 @@ fn detect_main(barometer: &mut Baro) {
         for val in window.iter() {
             alt += val;
         }
-        alt /= WINDOW_SIZE as i32 as f32;
+        alt /= settings.WINDOW_SIZE as i32 as f32;
 
         //=========
 
-        if MAIN_DEPLOY_ALT - alt >= SIG_ALT_CHANGE {
+        if settings.MAIN_DEPLOY_ALT - alt >= settings.SIG_ALT_CHANGE {
             num_above_sig += 1;
-            println!("{}/{}", num_above_sig, ITER_ABOVE_SIG);
+            println!("{}/{}", num_above_sig, settings.ITER_ABOVE_SIG);
         }
         else {
             num_above_sig = 0;
         }
 
         // if above height threshold for given iterations
-        if num_above_sig > ITER_ABOVE_SIG {
+        if num_above_sig > settings.ITER_ABOVE_SIG {
             return ();
         }
     }
 }
 
+
 fn main() {
-    let mut buzzer = Indicator::new(26);
+    let settings = Settings::new();
+
+    let mut buzzer = Indicator::new(settings.BUZEER);
 
     buzzer.start(500, 1000, 5000);
 
     // pre-flight API
-    pre_flight();
+    pre_flight(&settings);
 
     // ARMED STAGE
     /*
@@ -286,13 +324,13 @@ fn main() {
 
     println!("initializing flight sensors");
 
-    let mut main_ign = Igniter::new(M_FIRE, M_CONT);
-    let mut droug_ign = Igniter::new(D_FIRE, D_CONT);    
-    let mut barometer = Baro::new(BARO_CONFIG_PATH);
+    let mut main_ign = Igniter::new(settings.M_FIRE, settings.M_CONT);
+    let mut droug_ign = Igniter::new(settings.D_FIRE, settings.D_CONT);    
+    let mut barometer = Baro::new(settings.BARO_CONFIG_PATH.to_string().as_str());
 
     let mut base_alt: f32 = 0f32;
     let mut i = 0;
-    while i < BASELINE_ITER {
+    while i < settings.BASELINE_ITER {
         match barometer.get_alt() {
             Ok(n) => {
                 base_alt += n;
@@ -308,14 +346,14 @@ fn main() {
 
     buzzer.start_inf(1000, 1000);
 
-    detect_liftoff(&mut barometer, &base_alt);
+    detect_liftoff(&settings, &mut barometer, &base_alt);
 
     buzzer.stop();
 
-    detect_apogee(&mut barometer, &base_alt);
+    detect_apogee(&settings, &mut barometer, &base_alt);
     droug_ign.fire_async();
 
-    detect_main(&mut barometer);
+    detect_main(&settings, &mut barometer);
     main_ign.fire_async();
 
 }
