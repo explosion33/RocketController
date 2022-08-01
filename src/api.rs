@@ -9,16 +9,28 @@ use std::sync::{Arc, Mutex};
 
 pub struct Data {
     pub altitude: Vec<(f32, f32)>,
+    pub pressure: Vec<(f32, f32)>,
+    pub temperature: Vec<(f32, f32)>,
     pub cont_main: Vec<(f32, f32)>,
     pub cont_droug: Vec<(f32, f32)>,
 
     pub is_alive: bool,
+    pub do_quit: bool,
     pub cmds: Vec<(String, f32)>,
 }
 
 impl Data {
     pub fn new() -> Data {
-        Data {altitude: vec![], cont_main: vec![], cont_droug: vec![], is_alive: true, cmds: vec![]}
+        Data {
+            altitude: vec![],
+            pressure: vec![],
+            temperature: vec![],
+            cont_main: vec![],
+            cont_droug: vec![],
+            is_alive: true,
+            do_quit: false,
+            cmds: vec![]
+        }
     }
 }
 
@@ -63,6 +75,14 @@ fn handle_api(state: &State<TData>, field: &str, points: i32) -> Json<Vec<(f32, 
             Json(compile_vec(&mut data.altitude, points, is_neg))
         },
 
+        "temp" => {
+            Json(compile_vec(&mut data.temperature, points, is_neg))
+        },
+
+        "pres" => {
+            Json(compile_vec(&mut data.pressure, points, is_neg))
+        },
+
         "cont_main" => {
             Json(compile_vec(&mut data.cont_main, points, is_neg))
         },
@@ -79,11 +99,17 @@ fn handle_api(state: &State<TData>, field: &str, points: i32) -> Json<Vec<(f32, 
 }
 
 #[rocket::get("/cmd/<cmd>")]
-fn handle_cmd(cmd: &str) -> &'static str {    
-    if cmd == "arm" {
-        println!("wrong arm");
-    }
+fn handle_cmd(state: &State<TData>, shutdown: Shutdown, cmd: &str) -> &'static str {    
+    let data = Arc::clone(&state);
+    let mut data = data.lock().expect("could not lock mutex");
 
+    match cmd {
+        "quit" => {
+            data.do_quit = true;
+            shutdown.notify()
+        },
+        _ => {},
+    };
 
     ""
 }
@@ -106,7 +132,7 @@ fn shutdown(shutdown: Shutdown) -> &'static str {
 }
 
 
-pub fn start_api(data: TData) {
+pub fn start_api(data: TData) -> bool {
     let api_data = Arc::clone(&data);
     rocket::tokio::runtime::Builder::new_multi_thread()
         .worker_threads(Config::from(Config::figment()).workers)
@@ -126,4 +152,5 @@ pub fn start_api(data: TData) {
     let data = Arc::clone(&data);
     let mut data = data.lock().expect("could not lock mutex");
     data.is_alive = false;
+    return !data.do_quit;
 }

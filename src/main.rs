@@ -10,7 +10,7 @@ mod indicator;
 use crate::api::start_api;
 mod api;
 
-use crate::file_tools::parse_ini;
+use crate::file_tools::{parse_ini, Logger};
 mod file_tools;
 
 use std::thread;
@@ -89,7 +89,7 @@ impl Settings {
 }
 
 
-fn pre_flight(settings: &Settings) {
+fn pre_flight(settings: &Settings) -> bool {
     // initiate shared memory
     let data = api::Data::new();
     let thread_data: api::TData = Arc::new(Mutex::new(data));
@@ -104,10 +104,12 @@ fn pre_flight(settings: &Settings) {
     });
 
     println!("starting api");
-    start_api(thread_data);
+    let is_armed = start_api(thread_data);
     println!("api closed");
     handle.join();
     println!("thread closed");
+
+    return is_armed;
 }
 
 fn api_getter(settings: &Settings, thread_data: api::TData) {
@@ -175,6 +177,21 @@ fn api_getter(settings: &Settings, thread_data: api::TData) {
             data.altitude.push((dt, avg));
         }
 
+        // other sensor data
+        match barometer.get_pressure() {
+            Ok(n) => {
+                data.pressure.push((dt,n));
+            }
+            Err(_) => {},
+        };
+
+        match barometer.get_temp() {
+            Ok(n) => {
+                data.temperature.push((dt,n));
+            }
+            Err(_) => {},
+        };
+
         // continuity sensor data
         data.cont_main.push((dt, main_ign.has_continuity() as i8 as f32));
         data.cont_droug.push((dt, droug_ign.has_continuity() as i8 as f32));
@@ -185,11 +202,14 @@ fn api_getter(settings: &Settings, thread_data: api::TData) {
     }
 }
 
-fn detect_liftoff(settings: &Settings, barometer: &mut Baro, base_alt: &f32) {
+fn detect_liftoff(settings: &Settings, logger: &mut Logger, barometer: &mut Baro, base_alt: &f32) {
     // detect significant upwards elevation change
     let mut window: Vec<f32> = vec![];
     let mut num_above_sig: u8 = 0;
+
+    let start = SystemTime::now();
     loop {
+        let dt = SystemTime::now().duration_since(start).expect("time went backwards").as_secs_f32();
         // rolling average altitudes
         match barometer.get_alt() {
             Ok(n) => {
@@ -214,6 +234,19 @@ fn detect_liftoff(settings: &Settings, barometer: &mut Baro, base_alt: &f32) {
         }
         avg /= settings.WINDOW_SIZE as f32;
 
+        logger.write(&dt);
+        logger.write(&avg);
+        match barometer.get_pressure() {
+            Ok(n) => {logger.write(&n);},
+            Err(_) => {},
+        };
+        match barometer.get_temp() {
+            Ok(n) => {logger.write(&n);},
+            Err(_) => {},
+        };
+        logger.end_cycle();
+
+
         // is significantly high
         if avg - base_alt >= settings.SIG_ALT_CHANGE {
             num_above_sig += 1;
@@ -230,13 +263,16 @@ fn detect_liftoff(settings: &Settings, barometer: &mut Baro, base_alt: &f32) {
     }
 }
 
-fn detect_apogee(settings: &Settings, barometer: &mut Baro, base_alt: &f32) {
+fn detect_apogee(settings: &Settings, logger: &mut Logger, barometer: &mut Baro, base_alt: &f32) {
     let mut window: Vec<f32> = vec![];
 
     let mut max_altitude = *base_alt;
     let mut num_above_sig: u8 = 0;
 
+    let start = SystemTime::now();
+
     loop {
+        let dt = SystemTime::now().duration_since(start).expect("time went backwards").as_secs_f32();
         match barometer.get_alt() {
             Ok(n)=>{
                 window.push(n);
@@ -257,6 +293,19 @@ fn detect_apogee(settings: &Settings, barometer: &mut Baro, base_alt: &f32) {
             alt += val;
         }
         alt /= settings.WINDOW_SIZE as i32 as f32;
+
+
+        logger.write(&dt);
+        logger.write(&alt);
+        match barometer.get_pressure() {
+            Ok(n) => {logger.write(&n);},
+            Err(_) => {},
+        };
+        match barometer.get_temp() {
+            Ok(n) => {logger.write(&n);},
+            Err(_) => {},
+        };
+        logger.end_cycle();
 
         if alt > max_altitude {
             max_altitude = alt;
@@ -277,11 +326,14 @@ fn detect_apogee(settings: &Settings, barometer: &mut Baro, base_alt: &f32) {
     }
 }
 
-fn detect_main(settings: &Settings, barometer: &mut Baro) {
+fn detect_main(settings: &Settings, logger: &mut Logger, barometer: &mut Baro) {
     let mut window: Vec<f32> = vec![];
     let mut num_above_sig: u8 = 0;
 
+    let start = SystemTime::now();
+
     loop {
+        let dt = SystemTime::now().duration_since(start).expect("time went backwards").as_secs_f32();
         match barometer.get_alt() {
             Ok(n)=>{
                 window.push(n);
@@ -302,6 +354,18 @@ fn detect_main(settings: &Settings, barometer: &mut Baro) {
             alt += val;
         }
         alt /= settings.WINDOW_SIZE as i32 as f32;
+
+        logger.write(&dt);
+        logger.write(&alt);
+        match barometer.get_pressure() {
+            Ok(n) => {logger.write(&n);},
+            Err(_) => {},
+        };
+        match barometer.get_temp() {
+            Ok(n) => {logger.write(&n);},
+            Err(_) => {},
+        };
+        logger.end_cycle();
 
         //=========
 
@@ -329,7 +393,11 @@ fn main() {
     buzzer.start(500, 1000, 5000);
 
     // pre-flight API
-    pre_flight(&settings);
+    let is_armed = pre_flight(&settings);
+
+    if (!is_armed) {
+        return ();
+    }
 
     // ARMED STAGE
     /*
@@ -345,6 +413,8 @@ fn main() {
     println!("initializing flight sensors");
 
     buzzer.start_inf(100, 200);
+
+    let mut logger: Logger = Logger::new("flight.log");
 
     let mut main_ign = Igniter::new(settings.M_FIRE, settings.M_CONT);
     let mut droug_ign = Igniter::new(settings.D_FIRE, settings.D_CONT);    
@@ -373,14 +443,14 @@ fn main() {
 
     buzzer.start_inf(1000, 1000);
 
-    detect_liftoff(&settings, &mut barometer, &base_alt);
+    detect_liftoff(&settings, &mut logger, &mut barometer, &base_alt);
 
     buzzer.stop();
 
-    detect_apogee(&settings, &mut barometer, &base_alt);
+    detect_apogee(&settings, &mut logger, &mut barometer, &base_alt);
     droug_ign.fire_async();
 
-    detect_main(&settings, &mut barometer);
+    detect_main(&settings, &mut logger, &mut barometer);
     main_ign.fire_async();
 
 }
