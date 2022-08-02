@@ -17,7 +17,6 @@ use std::thread;
 use std::time::Duration;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
-use std::collections::HashMap;
 
 
 /*const M_FIRE: u8 = 23;
@@ -41,6 +40,7 @@ const MAIN_DEPLOY_ALT: f32 = 199f32;
 */
 
 #[derive(Clone)]
+#[allow(non_snake_case)]
 struct Settings {
     pub M_FIRE: u8,
     pub M_CONT: u8,
@@ -106,7 +106,7 @@ fn pre_flight(settings: &Settings) -> bool {
     println!("starting api");
     let is_armed = start_api(thread_data);
     println!("api closed");
-    handle.join();
+    let _ = handle.join();
     println!("thread closed");
 
     return is_armed;
@@ -144,9 +144,9 @@ fn api_getter(settings: &Settings, thread_data: api::TData) {
                     barometer.configure(*val);
                 },
                 "fire" => {
-                    match *val {
-                        0f32 => {droug_ign.fire_async();},
-                        1f32 => {main_ign.fire_async();},
+                    match *val as i32 {
+                        0 => {droug_ign.fire_async();},
+                        1 => {main_ign.fire_async();},
                         _ => {},
                     };
                 },
@@ -234,17 +234,17 @@ fn detect_liftoff(settings: &Settings, logger: &mut Logger, barometer: &mut Baro
         }
         avg /= settings.WINDOW_SIZE as f32;
 
-        logger.write(&dt);
-        logger.write(&avg);
+        let _ = logger.write(&dt);
+        let _ = logger.write(&avg);
         match barometer.get_pressure() {
-            Ok(n) => {logger.write(&n);},
+            Ok(n) => {let _ = logger.write(&n);},
             Err(_) => {},
         };
         match barometer.get_temp() {
-            Ok(n) => {logger.write(&n);},
+            Ok(n) => {let _ = logger.write(&n);},
             Err(_) => {},
         };
-        logger.end_cycle();
+        let _ = logger.end_cycle();
 
 
         // is significantly high
@@ -295,17 +295,17 @@ fn detect_apogee(settings: &Settings, logger: &mut Logger, barometer: &mut Baro,
         alt /= settings.WINDOW_SIZE as i32 as f32;
 
 
-        logger.write(&dt);
-        logger.write(&alt);
+        let _ = logger.write(&dt);
+        let _ = logger.write(&alt);
         match barometer.get_pressure() {
-            Ok(n) => {logger.write(&n);},
+            Ok(n) => {let _ = logger.write(&n);},
             Err(_) => {},
         };
         match barometer.get_temp() {
-            Ok(n) => {logger.write(&n);},
+            Ok(n) => {let _ = logger.write(&n);},
             Err(_) => {},
         };
-        logger.end_cycle();
+        let _ = logger.end_cycle();
 
         if alt > max_altitude {
             max_altitude = alt;
@@ -355,17 +355,17 @@ fn detect_main(settings: &Settings, logger: &mut Logger, barometer: &mut Baro) {
         }
         alt /= settings.WINDOW_SIZE as i32 as f32;
 
-        logger.write(&dt);
-        logger.write(&alt);
+        let _ = logger.write(&dt);
+        let _ = logger.write(&alt);
         match barometer.get_pressure() {
-            Ok(n) => {logger.write(&n);},
+            Ok(n) => {let _ = logger.write(&n);},
             Err(_) => {},
         };
         match barometer.get_temp() {
-            Ok(n) => {logger.write(&n);},
+            Ok(n) => {let _ = logger.write(&n);},
             Err(_) => {},
         };
-        logger.end_cycle();
+        let _ = logger.end_cycle();
 
         //=========
 
@@ -384,35 +384,69 @@ fn detect_main(settings: &Settings, logger: &mut Logger, barometer: &mut Baro) {
     }
 }
 
+fn basic_log(settings: &Settings, logger: &mut Logger, barometer: &mut Baro) {
+    let mut window: Vec<f32> = vec![];
+
+    let start = SystemTime::now();
+
+    loop {
+        let dt = SystemTime::now().duration_since(start).expect("time went backwards").as_secs_f32();
+        match barometer.get_alt() {
+            Ok(n)=>{
+                window.push(n);
+                if window.len() > settings.WINDOW_SIZE {
+                    window.remove(0);
+                }
+            },
+            Err(_) => {}
+        };
+
+        if window.len() < settings.WINDOW_SIZE {
+            continue;
+        }
+
+        //=========
+        let mut alt = 0f32;
+        for val in window.iter() {
+            alt += val;
+        }
+        alt /= settings.WINDOW_SIZE as i32 as f32;
+
+        let _ = logger.write(&dt);
+        let _ = logger.write(&alt);
+        match barometer.get_pressure() {
+            Ok(n) => {let _ = logger.write(&n);},
+            Err(_) => {},
+        };
+        match barometer.get_temp() {
+            Ok(n) => {let _ = logger.write(&n);},
+            Err(_) => {},
+        };
+        let _ = logger.end_cycle();
+    }
+
+}
 
 fn main() {
     let settings = Settings::new();
 
     let mut buzzer = Indicator::new(settings.BUZEER);
+    let mut led: Indicator = Indicator::new(settings.STATUS);
 
     buzzer.start(500, 1000, 5000);
+    led.start(500, 1000, 5000);
 
     // pre-flight API
     let is_armed = pre_flight(&settings);
 
-    if (!is_armed) {
+    if !is_armed {
         return ();
     }
-
-    // ARMED STAGE
-    /*
-     * TODO:
-     * add data logging support
-     * fine tune above constants to remove noise from calculations
-     *
-     * TESTING:
-     * throw test, ensure all stages are met
-     * 
-    */
 
     println!("initializing flight sensors");
 
     buzzer.start_inf(100, 200);
+    led.start_inf(100, 200);
 
     let mut logger: Logger = Logger::new("flight.log");
 
@@ -437,20 +471,32 @@ fn main() {
     println!("sensors initialized, waiting for liftoff");
 
     buzzer.stop();
+    led.stop();
     thread::sleep(Duration::from_millis(200)); //enough time for buzzer to stop
     // should be reworked to return a join call?
     // and managed so only one tone is running at a time
 
     buzzer.start_inf(1000, 1000);
+    led.start_inf(1000, 1000);
 
     detect_liftoff(&settings, &mut logger, &mut barometer, &base_alt);
 
     buzzer.stop();
+    led.stop();
 
     detect_apogee(&settings, &mut logger, &mut barometer, &base_alt);
     droug_ign.fire_async();
 
+    buzzer.start(200, 200, 200);
+    led.start(200, 200, 200);
+
     detect_main(&settings, &mut logger, &mut barometer);
     main_ign.fire_async();
+
+    buzzer.start(200, 200, 200);
+    led.start(200, 200, 200);
+
+    basic_log(&settings, &mut logger, &mut barometer);
+
 
 }

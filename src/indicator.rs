@@ -1,10 +1,7 @@
 #![allow(dead_code)]
 
-use rocket::futures::lock;
-use rocket::futures::lock::MutexGuard;
 use rppal::gpio::Gpio;
 use rppal::gpio::OutputPin;
-use rppal::gpio::InputPin;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
